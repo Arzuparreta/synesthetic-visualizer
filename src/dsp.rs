@@ -28,7 +28,7 @@ impl DspFrame {
     }
 }
 
-pub fn spawn_dsp_thread(mut consumer: HeapCons<f32>) -> Receiver<DspFrame> {
+pub fn spawn_dsp_thread(mut consumer: HeapCons<f32>, sample_rate: f32) -> Receiver<DspFrame> {
     let (sender, receiver) = channel::bounded::<DspFrame>(2);
 
     thread::Builder::new()
@@ -78,11 +78,16 @@ pub fn spawn_dsp_thread(mut consumer: HeapCons<f32>) -> Receiver<DspFrame> {
 
                 fft.process_with_scratch(&mut fft_buf, &mut scratch);
 
-                // --- Magnitudes ---
+                // --- Magnitudes (perceptual weighting: boost highs, compress sub-bass) ---
                 let mut frame = DspFrame::new();
                 for k in 0..NUM_BINS {
                     let c = fft_buf[k];
-                    frame.magnitudes[k] = (c.re * c.re + c.im * c.im).sqrt() * mag_scale;
+                    let mut mag = (c.re * c.re + c.im * c.im).sqrt() * mag_scale;
+                    let freq = k as f32 * (sample_rate / FFT_SIZE as f32);
+                    let weight = (freq / 1000.0).max(0.1).sqrt();
+                    mag *= weight;
+                    mag = mag.clamp(0.0, 5.0);
+                    frame.magnitudes[k] = mag;
                 }
 
                 // --- Peak detection: top 3 local maxima ---

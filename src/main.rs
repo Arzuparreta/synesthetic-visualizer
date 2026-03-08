@@ -50,7 +50,7 @@ fn model(app: &App) -> Model {
 
     let capture = audio::start_capture(use_mic());
     let sample_rate = capture.sample_rate;
-    let dsp_receiver = dsp::spawn_dsp_thread(capture.consumer);
+    let dsp_receiver = dsp::spawn_dsp_thread(capture.consumer, sample_rate as f32);
 
     let gpu = gpu::GpuState::new(device, msaa, sample_rate as f32);
 
