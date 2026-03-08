@@ -1,7 +1,5 @@
 # Bachilizer
 
-![Bachilizer Demo](./docs/demo.gif) *(Note: Add a GIF or screenshot of the visualizer here!)*
-
 A real-time audio visualizer that maps frequency content onto a three-dimensional Tonnetz spiral. 
 
 While traditional visualizers simply map volume to a linear frequency spectrum (an engineering view), Bachilizer visualizes **harmonic relationships, movement, and musical form**. By rendering harmonic and combination-tone relationships as additive Gaussian splats in 3D space, it creates a fluid, perceptually grounded representation of a song's structural harmony.
