@@ -10,6 +10,7 @@ rustfft = "6.1"
 ringbuf = "0.4"
 crossbeam = "0.8"
 nannou = "0.19"
+bytemuck = { version = "1", features = ["derive"] }
 
 [profile.release]
 opt-level = 3
