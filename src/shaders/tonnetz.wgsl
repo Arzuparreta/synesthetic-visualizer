@@ -27,8 +27,6 @@ struct VertexOutput {
 @group(0) @binding(2) var<storage, read> tartini_data: array<TartiniTone>;
 
 const PI: f32 = 3.14159265358979;
-const MIN_FREQ: f32 = 40.0;
-const MAX_FREQ: f32 = 18000.0;
 
 // ---- helpers ----
 
@@ -68,13 +66,9 @@ fn quad_offset(vid: u32) -> vec2<f32> {
 
 fn tonnetz_pos(bin: u32) -> vec3<f32> {
     let freq = f32(bin) * (uniforms.sample_rate / uniforms.fft_size);
-    // Musical window 40 Hz–18 kHz: normalized log height t in [0, 1]
-    let log_min = log2(MIN_FREQ);
-    let log_max = log2(MAX_FREQ);
-    let t = (log2(freq) - log_min) / (log_max - log_min);
-    let y_pos = (t - 0.5) * 8.0;
-    // Harmonic integrity: pitch class from log2 so octaves stay aligned
-    let semitones = 12.0 * log2(freq / 440.0);
+    let log_ratio = log2(freq / 440.0);
+    let y_pos = log_ratio * 2.0;
+    let semitones = 12.0 * log_ratio;
     let pitch_class = ((semitones % 12.0) + 12.0) % 12.0;
     let theta = (2.0 * PI / 12.0) * pitch_class;
     let r = 2.0;
@@ -101,7 +95,7 @@ fn vs_main(
     let freq = f32(instance) * (uniforms.sample_rate / uniforms.fft_size);
     let mag = magnitudes[instance];
 
-    if freq < MIN_FREQ || freq > MAX_FREQ {
+    if freq < 20.0 {
         out.position = vec4<f32>(0.0, 0.0, 0.0, 1.0);
         out.color = vec3<f32>(0.0);
         out.alpha = 0.0;
@@ -152,7 +146,7 @@ fn vs_tartini(
     let mag = tone.magnitude;
 
     let freq = f32(bin) * (uniforms.sample_rate / uniforms.fft_size);
-    if freq < MIN_FREQ || freq > MAX_FREQ || bin >= u32(uniforms.fft_size / 2.0) {
+    if freq < 20.0 || bin >= u32(uniforms.fft_size / 2.0) {
         out.position = vec4<f32>(0.0, 0.0, 0.0, 1.0);
         out.color = vec3<f32>(0.0);
         out.alpha = 0.0;
