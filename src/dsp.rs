@@ -56,10 +56,10 @@ pub fn spawn_dsp_thread(mut consumer: HeapCons<f32>, sample_rate: f32) -> Receiv
             const PEAK_THRESHOLD: f32 = 0.001;
             const TOP_N: usize = 3;
 
-            let k_low = ((20.0 * FFT_SIZE as f32 / sample_rate).ceil() as usize).min(NUM_BINS - 1);
-            let k_high = ((150.0 * FFT_SIZE as f32 / sample_rate).floor() as usize)
-                .min(NUM_BINS - 1)
-                .max(k_low);
+            let k_low = (20.0 * FFT_SIZE as f32 / sample_rate).ceil() as usize;
+            let k_high = (150.0 * FFT_SIZE as f32 / sample_rate).floor() as usize;
+            let k_low = k_low.min(NUM_BINS - 1);
+            let k_high = k_high.min(NUM_BINS - 1).max(k_low);
 
             let mut prev_bass_energy = 0.0f32;
 
@@ -100,10 +100,9 @@ pub fn spawn_dsp_thread(mut consumer: HeapCons<f32>, sample_rate: f32) -> Receiv
                 }
 
                 let current_bass_energy: f32 =
-                    frame.magnitudes[k_low..=k_high].iter().copied().sum();
-                let flux = (current_bass_energy - prev_bass_energy).max(0.0);
+                    frame.magnitudes[k_low..=k_high].iter().sum();
+                frame.bass_flux = (current_bass_energy - prev_bass_energy).max(0.0);
                 prev_bass_energy = current_bass_energy;
-                frame.bass_flux = flux;
 
                 // --- Peak detection: top 3 local maxima ---
                 let mut peaks = [(0usize, 0.0f32); TOP_N];
