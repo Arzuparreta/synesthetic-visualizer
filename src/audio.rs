@@ -13,6 +13,9 @@ pub struct AudioCapture {
 pub fn start_capture() -> AudioCapture {
     let host = cpal::default_host();
 
+    #[cfg(target_os = "linux")]
+    let pre_ids = snapshot_source_output_ids();
+
     let (device, config) = select_device(&host);
 
     let sample_rate = config.sample_rate().0;
@@ -46,6 +49,9 @@ pub fn start_capture() -> AudioCapture {
 
     stream.play().expect("failed to start audio stream");
 
+    #[cfg(target_os = "linux")]
+    redirect_to_monitor(&pre_ids);
+
     AudioCapture {
         stream,
         consumer,
@@ -54,42 +60,97 @@ pub fn start_capture() -> AudioCapture {
 }
 
 fn select_device(host: &cpal::Host) -> (cpal::Device, cpal::SupportedStreamConfig) {
-    // Attempt 1: Output device loopback (WASAPI on Windows captures this natively).
-    if let Some(dev) = host.default_output_device() {
-        if let Ok(cfg) = dev.default_input_config() {
-            eprintln!(
-                "Loopback device: {}",
-                dev.name().unwrap_or_default()
-            );
-            return (dev, cfg);
-        }
-    }
-
-    // Attempt 2 (Linux): PulseAudio / PipeWire expose a "Monitor" source.
-    if cfg!(target_os = "linux") {
-        if let Ok(inputs) = host.input_devices() {
-            for dev in inputs {
-                let name = dev.name().unwrap_or_default();
-                if name.to_ascii_lowercase().contains("monitor") {
-                    if let Ok(cfg) = dev.default_input_config() {
-                        eprintln!("Monitor device: {name}");
-                        return (dev, cfg);
-                    }
-                }
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(dev) = host.default_output_device() {
+            if let Ok(cfg) = dev.default_input_config() {
+                eprintln!("Loopback device: {}", dev.name().unwrap_or_default());
+                return (dev, cfg);
             }
         }
     }
 
-    // Attempt 3: Fallback to default microphone.
     let dev = host
         .default_input_device()
         .expect("no audio input device available");
     let cfg = dev
         .default_input_config()
         .expect("no default input config");
-    eprintln!(
-        "Fallback mic: {}",
-        dev.name().unwrap_or_default()
-    );
+    eprintln!("Input device: {}", dev.name().unwrap_or_default());
     (dev, cfg)
+}
+
+#[cfg(target_os = "linux")]
+fn snapshot_source_output_ids() -> Vec<String> {
+    use std::process::Command;
+    Command::new("pactl")
+        .args(["list", "short", "source-outputs"])
+        .output()
+        .ok()
+        .map(|o| {
+            String::from_utf8_lossy(&o.stdout)
+                .lines()
+                .filter_map(|l| l.split('\t').next().map(|id| id.to_string()))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Diff source-output IDs against a pre-stream snapshot, then move the new
+/// entry to the monitor source.
+#[cfg(target_os = "linux")]
+fn redirect_to_monitor(pre_ids: &[String]) {
+    use std::process::Command;
+    use std::thread;
+    use std::time::Duration;
+
+    let sources = match Command::new("pactl")
+        .args(["list", "short", "sources"])
+        .output()
+    {
+        Ok(o) => String::from_utf8_lossy(&o.stdout).to_string(),
+        Err(_) => return,
+    };
+
+    let monitor = sources
+        .lines()
+        .filter(|l| l.to_ascii_lowercase().contains("monitor"))
+        .find(|l| l.contains("RUNNING"))
+        .or_else(|| {
+            sources
+                .lines()
+                .find(|l| l.to_ascii_lowercase().contains("monitor"))
+        })
+        .and_then(|l| l.split('\t').nth(1))
+        .map(|s| s.to_string());
+
+    let monitor = match monitor {
+        Some(m) => m,
+        None => {
+            eprintln!("No monitor source found, using mic");
+            return;
+        }
+    };
+
+    for attempt in 0..6 {
+        thread::sleep(Duration::from_millis(if attempt == 0 { 100 } else { 200 }));
+
+        let post_ids = snapshot_source_output_ids();
+        let new_id = post_ids.iter().find(|id| !pre_ids.contains(id));
+
+        if let Some(id) = new_id {
+            match Command::new("pactl")
+                .args(["move-source-output", id, &monitor])
+                .status()
+            {
+                Ok(s) if s.success() => {
+                    eprintln!("Redirected to monitor: {monitor}");
+                    return;
+                }
+                _ => eprintln!("move-source-output failed"),
+            }
+        }
+    }
+
+    eprintln!("Stream not registered in PipeWire, using mic");
 }
