@@ -8,10 +8,12 @@ const EMA_ALPHA: f32 = 0.3;
 const GAIN_ATTACK: f32 = 0.05;
 const GAIN_RELEASE: f32 = 0.0005;
 const GAIN_FLOOR: f32 = 0.001;
-const BASE_ROTATION_SPEED: f32 = 0.05;
-const MAX_ADDITIONAL_SPEED: f32 = 0.3;
-const TEMPO_DECAY: f32 = 0.99;
-const BEAT_MULTIPLIER: f32 = 1.8;
+const BASE_ROTATION_SPEED: f32 = 0.04;
+const MAX_TEMPO_SPEED: f32 = 0.25;
+const MAX_PUNCH_SPEED: f32 = 0.45;
+const TEMPO_DECAY: f32 = 0.997; // Very slow for stable tempo estimation
+const PUNCH_DECAY: f32 = 0.88;  // Fast for "snappy" kicks
+const BEAT_MULTIPLIER: f32 = 1.6;
 
 struct Model {
     _stream: cpal::Stream,
@@ -27,6 +29,7 @@ struct Model {
     camera_pitch: f32,
     camera_radius: f32,
     tempo_drive: f32,
+    beat_punch: f32,
     flux_ema: f32,
     mouse_pressed: bool,
     last_mouse: Vec2,
@@ -73,6 +76,7 @@ fn model(app: &App) -> Model {
         camera_pitch: 0.3,
         camera_radius: 12.0,
         tempo_drive: 0.0,
+        beat_punch: 0.0,
         flux_ema: 0.0,
         mouse_pressed: false,
         last_mouse: Vec2::ZERO,
@@ -111,8 +115,10 @@ fn update(app: &App, model: &mut Model, _update: Update) {
         model.camera_pitch = (model.camera_pitch + delta.y * 0.005).clamp(-1.5, 1.5);
     } else {
         let delta_time = app.duration.since_prev_update.as_secs_f32();
-        let current_speed =
-            BASE_ROTATION_SPEED + (model.tempo_drive * MAX_ADDITIONAL_SPEED);
+        // Speed = Base + Tempo (stable) + Punch (instant)
+        let current_speed = BASE_ROTATION_SPEED
+            + (model.tempo_drive * MAX_TEMPO_SPEED)
+            + (model.beat_punch * MAX_PUNCH_SPEED);
         model.camera_yaw += current_speed * delta_time;
     }
     model.last_mouse = current_mouse;
@@ -139,17 +145,23 @@ fn update(app: &App, model: &mut Model, _update: Update) {
     let mut beat_detected = false;
 
     while let Ok(frame) = model.dsp_receiver.try_recv() {
-        model.flux_ema = (model.flux_ema * 0.85) + (frame.bass_flux * 0.15);
-        if frame.bass_flux > (model.flux_ema * BEAT_MULTIPLIER) && frame.bass_flux > 0.1 {
+        // Smooth flux EMA for adaptive thresholding
+        model.flux_ema = (model.flux_ema * 0.9) + (frame.bass_flux * 0.1);
+        
+        // Onset detection: current flux must be significantly above average
+        if frame.bass_flux > (model.flux_ema * BEAT_MULTIPLIER) && frame.bass_flux > 0.05 {
             beat_detected = true;
         }
         latest = Some(frame);
     }
 
     if beat_detected {
-        model.tempo_drive = (model.tempo_drive + 0.15).min(1.0);
+        model.tempo_drive = (model.tempo_drive + 0.08).min(1.0);
+        model.beat_punch = 1.0;
     }
+    
     model.tempo_drive *= TEMPO_DECAY;
+    model.beat_punch *= PUNCH_DECAY;
 
     if let Some(frame) = latest {
         for i in 0..dsp::NUM_BINS {

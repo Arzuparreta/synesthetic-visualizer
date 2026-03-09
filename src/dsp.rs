@@ -61,7 +61,7 @@ pub fn spawn_dsp_thread(mut consumer: HeapCons<f32>, sample_rate: f32) -> Receiv
             let k_low = k_low.min(NUM_BINS - 1);
             let k_high = k_high.min(NUM_BINS - 1).max(k_low);
 
-            let mut prev_bass_energy = 0.0f32;
+            let mut prev_magnitudes = vec![0.0f32; NUM_BINS];
 
             loop {
                 let n = consumer.pop_slice(&mut read_buf);
@@ -99,10 +99,16 @@ pub fn spawn_dsp_thread(mut consumer: HeapCons<f32>, sample_rate: f32) -> Receiv
                     frame.magnitudes[k] = mag;
                 }
 
-                let current_bass_energy: f32 =
-                    frame.magnitudes[k_low..=k_high].iter().sum();
-                frame.bass_flux = (current_bass_energy - prev_bass_energy).max(0.0);
-                prev_bass_energy = current_bass_energy;
+                // --- Spectral Flux in Bass Range (Onset Detection) ---
+                // Sum of positive changes in each bin. This is much better for
+                // rhythm than tracking total energy change.
+                let mut flux = 0.0f32;
+                for k in k_low..=k_high {
+                    let diff = (frame.magnitudes[k] - prev_magnitudes[k]).max(0.0);
+                    flux += diff;
+                }
+                frame.bass_flux = flux;
+                prev_magnitudes.copy_from_slice(&frame.magnitudes);
 
                 // --- Peak detection: top 3 local maxima ---
                 let mut peaks = [(0usize, 0.0f32); TOP_N];
