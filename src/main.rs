@@ -164,8 +164,8 @@ fn update(app: &App, model: &mut Model, _update: Update) {
         if frame.flux[0] > (model.flux_ema[0] * BEAT_MULTIPLIER).max(0.1) {
             if (current_time - model.last_low_trigger) > LOW_DEBOUNCE_WINDOW {
                 model.last_low_trigger = current_time;
-                frame_punch += 0.6;
-                frame_tempo_boost += 0.12;
+                frame_punch += 0.71;
+                frame_tempo_boost += 0.14;
             }
         }
         
