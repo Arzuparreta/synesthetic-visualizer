@@ -14,6 +14,8 @@ const MAX_PUNCH_SPEED: f32 = 0.45;
 const TEMPO_DECAY: f32 = 0.997; // Very slow for stable tempo estimation
 const PUNCH_DECAY: f32 = 0.88;  // Fast for "snappy" kicks
 const BEAT_MULTIPLIER: f32 = 1.6;
+const HIGH_MULTIPLIER: f32 = 2.2; // Sharper threshold for high-end transients
+const LOW_DEBOUNCE_WINDOW: f32 = 0.080; 
 
 struct Model {
     _stream: cpal::Stream,
@@ -30,7 +32,8 @@ struct Model {
     camera_radius: f32,
     tempo_drive: f32,
     beat_punch: f32,
-    flux_ema: f32,
+    flux_ema: [f32; 3],
+    last_low_trigger: f32,
     mouse_pressed: bool,
     last_mouse: Vec2,
 }
@@ -77,7 +80,8 @@ fn model(app: &App) -> Model {
         camera_radius: 12.0,
         tempo_drive: 0.0,
         beat_punch: 0.0,
-        flux_ema: 0.0,
+        flux_ema: [0.0; 3],
+        last_low_trigger: 0.0,
         mouse_pressed: false,
         last_mouse: Vec2::ZERO,
     }
@@ -142,22 +146,48 @@ fn update(app: &App, model: &mut Model, _update: Update) {
 
     // --- DSP data ---
     let mut latest: Option<dsp::DspFrame> = None;
-    let mut beat_detected = false;
+    let current_time = app.time;
 
     while let Ok(frame) = model.dsp_receiver.try_recv() {
-        // Smooth flux EMA for adaptive thresholding
-        model.flux_ema = (model.flux_ema * 0.9) + (frame.bass_flux * 0.1);
-        
-        // Onset detection: current flux must be significantly above average
-        if frame.bass_flux > (model.flux_ema * BEAT_MULTIPLIER) && frame.bass_flux > 0.05 {
-            beat_detected = true;
+        // Multi-band adaptive thresholding
+        // We track EMA for Low, Mid, and High independently
+        for i in 0..3 {
+            model.flux_ema[i] = (model.flux_ema[i] * 0.9) + (frame.flux[i] * 0.1);
         }
-        latest = Some(frame);
-    }
 
-    if beat_detected {
-        model.tempo_drive = (model.tempo_drive + 0.08).min(1.0);
-        model.beat_punch = 1.0;
+        // --- Scientific Responsiveness (Additive Stacking) ---
+        // Every frame, all bands that hit their threshold contribute to the punch.
+        let mut frame_punch = 0.0;
+        let mut frame_tempo_boost = 0.0;
+        
+        // Low: Foundation (80ms debounce to avoid multiple clicks on one thump)
+        if frame.flux[0] > (model.flux_ema[0] * BEAT_MULTIPLIER).max(0.1) {
+            if (current_time - model.last_low_trigger) > LOW_DEBOUNCE_WINDOW {
+                model.last_low_trigger = current_time;
+                frame_punch += 0.6;
+                frame_tempo_boost += 0.12;
+            }
+        }
+        
+        // Mid: Body
+        if frame.flux[1] > (model.flux_ema[1] * BEAT_MULTIPLIER).max(0.1) {
+            frame_punch += 0.3;
+            frame_tempo_boost += 0.04;
+        }
+
+        // High: Clarity (Sharper threshold to avoid jitter on noise)
+        if frame.flux[2] > (model.flux_ema[2] * HIGH_MULTIPLIER).max(0.1) {
+            frame_punch += 0.4;
+            frame_tempo_boost += 0.08;
+        }
+
+        // Apply cumulative effects
+        if frame_punch > 0.0 {
+            model.beat_punch = (model.beat_punch + frame_punch).min(1.0);
+            model.tempo_drive = (model.tempo_drive + frame_tempo_boost).min(1.0);
+        }
+
+        latest = Some(frame);
     }
     
     model.tempo_drive *= TEMPO_DECAY;
@@ -217,6 +247,7 @@ fn update(app: &App, model: &mut Model, _update: Update) {
         view_proj.to_cols_array_2d(),
         cam_pos.to_array(),
         time,
+        model.beat_punch,
         model.num_tartini,
     );
 }

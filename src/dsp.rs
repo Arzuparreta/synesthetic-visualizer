@@ -16,7 +16,8 @@ pub struct DspFrame {
     pub magnitudes: [f32; NUM_BINS],
     pub num_tartini: usize,
     pub tartini_bins: [(usize, usize, f32); MAX_TARTINI],
-    pub bass_flux: f32,
+    /// Multi-band flux: [Low (20-250Hz), Mid (250-4k), High (4k-16k)]
+    pub flux: [f32; 3],
 }
 
 impl DspFrame {
@@ -25,7 +26,7 @@ impl DspFrame {
             magnitudes: [0.0; NUM_BINS],
             num_tartini: 0,
             tartini_bins: [(0, 0, 0.0); MAX_TARTINI],
-            bass_flux: 0.0,
+            flux: [0.0; 3],
         }
     }
 }
@@ -56,10 +57,15 @@ pub fn spawn_dsp_thread(mut consumer: HeapCons<f32>, sample_rate: f32) -> Receiv
             const PEAK_THRESHOLD: f32 = 0.001;
             const TOP_N: usize = 3;
 
-            let k_low = (20.0 * FFT_SIZE as f32 / sample_rate).ceil() as usize;
-            let k_high = (150.0 * FFT_SIZE as f32 / sample_rate).floor() as usize;
-            let k_low = k_low.min(NUM_BINS - 1);
-            let k_high = k_high.min(NUM_BINS - 1).max(k_low);
+            // Frequency band indices
+            let bin_freq = sample_rate / FFT_SIZE as f32;
+            let k_low_end = (250.0 / bin_freq).round() as usize;
+            let k_mid_end = (4000.0 / bin_freq).round() as usize;
+            let k_high_end = (16000.0 / bin_freq).round() as usize;
+
+            let k_low_end = k_low_end.min(NUM_BINS - 1);
+            let k_mid_end = k_mid_end.min(NUM_BINS - 1).max(k_low_end);
+            let k_high_end = k_high_end.min(NUM_BINS - 1).max(k_mid_end);
 
             let mut prev_magnitudes = vec![0.0f32; NUM_BINS];
 
@@ -70,9 +76,6 @@ pub fn spawn_dsp_thread(mut consumer: HeapCons<f32>, sample_rate: f32) -> Receiv
                     continue;
                 }
 
-                // Sliding window: shift old samples left, append new ones right.
-                // This gives overlap-add style processing without waiting for
-                // a full FFT_SIZE worth of new samples.
                 if n >= FFT_SIZE {
                     slide_buf.copy_from_slice(&read_buf[n - FFT_SIZE..n]);
                 } else {
@@ -80,34 +83,49 @@ pub fn spawn_dsp_thread(mut consumer: HeapCons<f32>, sample_rate: f32) -> Receiv
                     slide_buf[FFT_SIZE - n..].copy_from_slice(&read_buf[..n]);
                 }
 
-                // Apply Hanning window into the complex FFT buffer
                 for i in 0..FFT_SIZE {
                     fft_buf[i] = Complex::new(slide_buf[i] * window[i], 0.0);
                 }
 
                 fft.process_with_scratch(&mut fft_buf, &mut scratch);
 
-                // --- Magnitudes (perceptual weighting: boost highs, compress sub-bass) ---
+                // --- Magnitudes with Psychoacoustic Weighting ---
                 let mut frame = DspFrame::new();
                 for k in 0..NUM_BINS {
                     let c = fft_buf[k];
                     let mut mag = (c.re * c.re + c.im * c.im).sqrt() * mag_scale;
-                    let freq = k as f32 * (sample_rate / FFT_SIZE as f32);
-                    let weight = (freq / 1000.0).max(0.1).sqrt();
-                    mag *= weight;
+                    let freq = k as f32 * bin_freq;
+
+                    // A-weighting approximation / Perceptual curve
+                    // Boosts presence (2-5kHz), slight roll-off for sub/extreme-high
+                    let f_sq = freq * freq;
+                    let weight = if freq < 10.0 { 0.1 } else {
+                        let w = (12200.0 * 12200.0 * f_sq * f_sq) /
+                            ((f_sq + 20.6 * 20.6) * 
+                             ((f_sq + 107.7 * 107.7) * (f_sq + 737.9 * 737.9)).sqrt() * 
+                             (f_sq + 12200.0 * 12200.0));
+                        w.max(0.01)
+                    };
+                    
+                    mag *= weight * 4.0; // Scale back up after weighting
                     mag = mag.clamp(0.0, 5.0);
                     frame.magnitudes[k] = mag;
                 }
 
-                // --- Spectral Flux in Bass Range (Onset Detection) ---
-                // Sum of positive changes in each bin. This is much better for
-                // rhythm than tracking total energy change.
-                let mut flux = 0.0f32;
-                for k in k_low..=k_high {
-                    let diff = (frame.magnitudes[k] - prev_magnitudes[k]).max(0.0);
-                    flux += diff;
+                // --- Multi-Band Spectral Flux (Onset Detection) ---
+                // Low (20 - 250Hz)
+                for k in 2..k_low_end {
+                    frame.flux[0] += (frame.magnitudes[k] - prev_magnitudes[k]).max(0.0);
                 }
-                frame.bass_flux = flux;
+                // Mid (250Hz - 4kHz)
+                for k in k_low_end..k_mid_end {
+                    frame.flux[1] += (frame.magnitudes[k] - prev_magnitudes[k]).max(0.0);
+                }
+                // High (4kHz - 16kHz)
+                for k in k_mid_end..k_high_end {
+                    frame.flux[2] += (frame.magnitudes[k] - prev_magnitudes[k]).max(0.0);
+                }
+
                 prev_magnitudes.copy_from_slice(&frame.magnitudes);
 
                 // --- Peak detection: top 3 local maxima ---

@@ -15,8 +15,8 @@ struct Uniforms {
     time: f32,
     sample_rate: f32,
     fft_size: f32,
+    beat_pulse: f32,
     num_tartini: u32,
-    _pad: u32,
 }
 
 #[repr(C)]
@@ -193,6 +193,7 @@ impl GpuState {
         view_proj: [[f32; 4]; 4],
         camera_pos: [f32; 3],
         time: f32,
+        beat_pulse: f32,
         num_tartini: u32,
     ) {
         queue.write_buffer(&self.magnitude_buffer, 0, bytemuck::cast_slice(magnitudes));
@@ -203,8 +204,8 @@ impl GpuState {
             time,
             sample_rate: self.sample_rate,
             fft_size: dsp::FFT_SIZE as f32,
+            beat_pulse,
             num_tartini,
-            _pad: 0,
         };
         queue.write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&u));
     }
