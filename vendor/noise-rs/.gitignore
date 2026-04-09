@@ -1,0 +1,8 @@
+/doc/
+/target/
+/.idea/
+/.criterion/
+*.iml
+Cargo.lock
+*.png
+.DS_Store
