@@ -1,6 +1,6 @@
 # Synesthetic Visualizer
 Click the image below to watch demos:
-[![Watch the demo](https://img.youtube.com/vi/rvp7EobO_14/maxresdefault.jpg)](https://www.youtube.com/watch?v=umtcc_3KsfI&list=PL4wUTace1gknGv08vVZ4xtOPwTX8arWlG&index=1)
+[![Watch the demo](https://img.youtube.com/vi/rvp7EobO_14/maxresdefault.jpg)](https://www.youtube.com/watch?v=QMMphh1Xcj0&list=PL4wUTace1gknGv08vVZ4xtOPwTX8arWlG&index=1)
 
 While traditional visualizers simply map volume to a linear frequency spectrum (an engineering view), Synesthetic Visualizer visualizes harmonic relationships, movement, and musical form by rendering harmonic and combination-tone relationships as additive Gaussian splats in 3D space.
 
